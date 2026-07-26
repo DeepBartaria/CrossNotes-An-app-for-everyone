@@ -75,7 +75,7 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
 
     private fun createPaint(): Paint {
         return Paint().apply {
-            if (isEraser) {
+            if (isEraser || isTemporaryEraser) {
                 color = Color.TRANSPARENT
                 strokeWidth = currentStrokeWidth * 5f // Thicker for eraser
                 xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
@@ -105,9 +105,15 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
         canvas.restoreToCount(saveCount)
     }
 
+    private var isTemporaryEraser = false
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
+
+        val isStylusButtonDown = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
+        val isEraserTool = event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
+        isTemporaryEraser = isStylusButtonDown || isEraserTool
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {

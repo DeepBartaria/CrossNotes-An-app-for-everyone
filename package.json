@@ -7,6 +7,7 @@
     "@openspacelabs/react-native-zoomable-view": "^2.4.2",
     "@types/lodash": "^4.17.24",
     "expo": "~57.0.8",
+    "expo-clipboard": "~57.0.1",
     "expo-dev-client": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.1",
@@ -15,7 +16,8 @@
     "react-native": "0.86.0",
     "react-native-gesture-handler": "^3.1.0",
     "react-native-reanimated": "^4.5.3",
-    "react-native-zoom-toolkit": "^5.1.0"
+    "react-native-zoom-toolkit": "^5.1.0",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
