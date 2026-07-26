@@ -1,7 +1,7 @@
 import 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useState, useEffect } from 'react';
-import { StyleSheet, Text, View, SafeAreaView, TouchableOpacity, Alert, Platform, StatusBar as RNStatusBar, ScrollView, Dimensions, Modal, TextInput, Image, Switch } from 'react-native';
+import { StyleSheet, Text, View, SafeAreaView, TouchableOpacity, Alert, Platform, StatusBar as RNStatusBar, ScrollView, Dimensions, Modal, TextInput, Image, Switch, FlatList } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
@@ -12,24 +12,36 @@ import DraggableOverlay from './DraggableOverlay';
 
 const COLORS = ['#29B6F6', '#FFEE58', '#66BB6A']; // Cyan, Yellow, Green from the image
 const THICKNESSES = [2, 5, 10]; // Fine, Medium, Thick
-const TEMPLATES = ['blank', 'ruled', 'grid'];
+const TEMPLATES = ['blank', 'ruled', 'semi-ruled', 'narrow-ruled', 'grid', 'narrow-grid', 'more-grid', 'school', 'college'];
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PAGE_HEIGHT = SCREEN_HEIGHT * 0.8;
 
 // Template Background Components
-const RuledTemplate = () => (
+const RuledTemplate = ({ spacing = 25, color = '#D3E3FD', margin = 0 }) => (
   <View style={StyleSheet.absoluteFill}>
-    {Array.from({ length: 25 }).map((_, i) => (
-      <View key={i} style={{ borderBottomWidth: 1, borderBottomColor: '#D3E3FD', height: PAGE_HEIGHT / 25, width: '100%' }} />
+    {margin > 0 && <View style={{ position: 'absolute', left: margin, width: 2, height: '100%', backgroundColor: '#FF8A80' }} />}
+    {Array.from({ length: Math.floor(PAGE_HEIGHT / spacing) }).map((_, i) => (
+      <View key={i} style={{ borderBottomWidth: 1, borderBottomColor: color, height: spacing, width: '100%' }} />
     ))}
   </View>
 );
 
-const GridTemplate = () => (
+const GridTemplate = ({ size = 25, color = '#E8F1F9' }) => (
   <View style={[StyleSheet.absoluteFill, { flexDirection: 'row', flexWrap: 'wrap' }]}>
-    {Array.from({ length: 400 }).map((_, i) => (
-      <View key={i} style={{ borderWidth: 0.5, borderColor: '#E8F1F9', width: '5%', height: PAGE_HEIGHT / 25 }} />
+    {Array.from({ length: Math.ceil((SCREEN_WIDTH / size) * (PAGE_HEIGHT / size)) }).map((_, i) => (
+      <View key={i} style={{ borderWidth: 0.5, borderColor: color, width: size, height: size }} />
+    ))}
+  </View>
+);
+
+const SchoolTemplate = () => (
+  <View style={StyleSheet.absoluteFill}>
+    <View style={{ position: 'absolute', left: 60, width: 2, height: '100%', backgroundColor: '#FF8A80' }} />
+    {Array.from({ length: Math.floor(PAGE_HEIGHT / 30) }).map((_, i) => (
+      <View key={i} style={{ height: 30, width: '100%', borderBottomWidth: 1, borderBottomColor: '#64B5F6' }}>
+        {i % 2 !== 0 && <View style={{ position: 'absolute', top: 15, width: '100%', borderBottomWidth: 1, borderBottomColor: '#64B5F6', borderStyle: 'dashed' }} />}
+      </View>
     ))}
   </View>
 );
@@ -43,6 +55,7 @@ export default function App() {
   
   // Transfer & Context State
   const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [macIpAddress, setMacIpAddress] = useState('');
   const [isBluetoothMode, setIsBluetoothMode] = useState(false);
   
@@ -103,7 +116,6 @@ export default function App() {
   const savedTranslateY = useSharedValue(0);
 
   const handleLongPress = (x: number, y: number, absX: number, absY: number) => {
-    // Only show page context menu if no overlay is selected, otherwise deselect overlay
     if (selectedOverlayId) {
       setSelectedOverlayId(null);
     } else {
@@ -122,6 +134,17 @@ export default function App() {
       if (selectedOverlayId) {
         runOnJS(setSelectedOverlayId)(null);
       }
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onStart(() => {
+      scale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
+      savedScale.value = 1;
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
     });
 
   const pinchGesture = Gesture.Pinch()
@@ -144,7 +167,7 @@ export default function App() {
       savedTranslateY.value = translateY.value;
     });
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, longPressGesture, tapGesture);
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, longPressGesture, tapGesture, doubleTapGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -174,14 +197,11 @@ export default function App() {
     setActivePageIndex(pages.length);
   };
 
-  const handleChangeTemplate = () => {
-    const currentPage = pages[activePageIndex];
-    const currentIdx = TEMPLATES.indexOf(currentPage.template);
-    const nextTemplate = TEMPLATES[(currentIdx + 1) % TEMPLATES.length];
-    
+  const handleChangeTemplate = (templateName: string) => {
     const newPages = [...pages];
-    newPages[activePageIndex].template = nextTemplate;
+    newPages[activePageIndex].template = templateName;
     setPages(newPages);
+    setTemplateModalVisible(false);
   };
 
   const handlePaste = async () => {
@@ -258,7 +278,6 @@ export default function App() {
       if (overlay.type === 'text') {
         await Clipboard.setStringAsync(overlay.content);
       } else if (overlay.type === 'image') {
-        // Expo Clipboard expects base64 without the prefix
         const base64Data = overlay.content.replace('data:image/png;base64,', '').replace('data:image/jpeg;base64,', '');
         await Clipboard.setImageAsync(base64Data);
       }
@@ -310,7 +329,7 @@ export default function App() {
             <TouchableOpacity style={styles.topBarIcon}>
               <MaterialCommunityIcons name="image-outline" size={24} color="#FFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.topBarIcon} onPress={handleChangeTemplate}>
+            <TouchableOpacity style={styles.topBarIcon} onPress={() => setTemplateModalVisible(true)}>
               <MaterialCommunityIcons name="file-document-outline" size={24} color="#FFF" />
             </TouchableOpacity>
           </View>
@@ -330,16 +349,18 @@ export default function App() {
       </SafeAreaView>
 
       <View style={styles.contentArea}>
-        <View style={styles.contextBarContainer}>
-          <View style={styles.undoPill}>
-            <TouchableOpacity style={styles.contextIcon} onPress={handleUndo}>
-              <MaterialCommunityIcons name="undo" size={22} color="#4A4A4A" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.contextIcon}>
-              <MaterialCommunityIcons name="redo" size={22} color="#B0B0B0" />
-            </TouchableOpacity>
-          </View>
+        
+        {/* Undo/Redo Pill moved to Left Upper Corner */}
+        <View style={styles.undoPill}>
+          <TouchableOpacity style={styles.contextIconSmall} onPress={handleUndo}>
+            <MaterialCommunityIcons name="undo" size={18} color="#4A4A4A" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.contextIconSmall}>
+            <MaterialCommunityIcons name="redo" size={18} color="#B0B0B0" />
+          </TouchableOpacity>
+        </View>
 
+        <View style={styles.contextBarContainer}>
           <View style={styles.mainPill}>
             <TouchableOpacity 
               style={[styles.contextIcon, !isEraser && styles.activeContextIcon]} 
@@ -411,8 +432,14 @@ export default function App() {
               >
                 {pages.map((p, index) => (
                   <View key={p.id} style={styles.pageWrapper}>
-                    {p.template === 'ruled' && <RuledTemplate />}
-                    {p.template === 'grid' && <GridTemplate />}
+                    {p.template === 'ruled' && <RuledTemplate spacing={40} />}
+                    {p.template === 'semi-ruled' && <RuledTemplate spacing={30} />}
+                    {p.template === 'narrow-ruled' && <RuledTemplate spacing={20} />}
+                    {p.template === 'grid' && <GridTemplate size={40} />}
+                    {p.template === 'narrow-grid' && <GridTemplate size={20} />}
+                    {p.template === 'more-grid' && <GridTemplate size={10} />}
+                    {p.template === 'school' && <SchoolTemplate />}
+                    {p.template === 'college' && <RuledTemplate spacing={35} margin={60} />}
                     
                     {/* Render Overlays Layer (Text & Images from Mac/Clipboard) */}
                     <View style={styles.overlayContainer} pointerEvents="box-none">
@@ -488,6 +515,38 @@ export default function App() {
           </TouchableOpacity>
         </Modal>
       )}
+
+      {/* Template Selection Modal */}
+      <Modal visible={templateModalVisible} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setTemplateModalVisible(false)}>
+          <View style={[styles.modalContent, { width: '80%', height: '70%', alignItems: 'center' }]}>
+            <Text style={styles.modalTitle}>Choose Template</Text>
+            <FlatList
+              data={TEMPLATES}
+              numColumns={3}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity 
+                  style={[styles.templateThumb, pages[activePageIndex].template === item && styles.activeTemplateThumb]}
+                  onPress={() => handleChangeTemplate(item)}
+                >
+                  <View style={styles.templateThumbInner}>
+                    {item === 'ruled' && <RuledTemplate spacing={8} />}
+                    {item === 'semi-ruled' && <RuledTemplate spacing={6} />}
+                    {item === 'narrow-ruled' && <RuledTemplate spacing={4} />}
+                    {item === 'grid' && <GridTemplate size={10} />}
+                    {item === 'narrow-grid' && <GridTemplate size={6} />}
+                    {item === 'more-grid' && <GridTemplate size={4} />}
+                    {item === 'school' && <SchoolTemplate />}
+                    {item === 'college' && <RuledTemplate spacing={8} margin={15} />}
+                  </View>
+                  <Text style={styles.templateThumbLabel}>{item.replace('-', ' ').toUpperCase()}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Transfer Connection Modal */}
       <Modal visible={transferModalVisible} transparent animationType="slide">
@@ -583,99 +642,108 @@ const styles = StyleSheet.create({
   },
   contentArea: {
     flex: 1,
-    backgroundColor: '#E6E8EA',
-  },
-  contextBarContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 15,
-    gap: 15,
-    zIndex: 10,
-    position: 'absolute',
-    width: '100%',
+    backgroundColor: '#E8F1F9',
   },
   undoPill: {
+    position: 'absolute',
+    top: 15,
+    left: 15,
+    zIndex: 20,
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 25,
-    gap: 15,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  contextIconSmall: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  contextBarContainer: {
+    position: 'absolute',
+    top: 15,
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    zIndex: 10,
+    pointerEvents: 'box-none',
   },
   mainPill: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
     paddingVertical: 8,
-    borderRadius: 30,
-    gap: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowRadius: 10,
+    elevation: 4,
   },
   contextIcon: {
-    padding: 8,
-    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    marginHorizontal: 4,
   },
   activeContextIcon: {
-    backgroundColor: '#DDF4FF', 
+    backgroundColor: '#F0F4F8',
   },
   divider: {
     width: 1,
     height: 24,
     backgroundColor: '#E0E0E0',
-    marginHorizontal: 4,
+    marginHorizontal: 12,
   },
   thicknessGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   thicknessButton: {
     width: 32,
-    height: 32,
+    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 8,
   },
   activeThickness: {
-    backgroundColor: '#EAEAEA',
+    backgroundColor: '#F0F4F8',
+    borderRadius: 8,
   },
   dash: {
-    width: 14,
-    backgroundColor: '#000',
+    width: 18,
+    backgroundColor: '#4A4A4A',
     borderRadius: 2,
   },
   colorGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
   },
   multiColorButton: {
-    padding: 2,
+    marginRight: 8,
   },
   colorSwatch: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginHorizontal: 4,
   },
   selectedColorSwatch: {
     borderWidth: 2,
-    borderColor: '#007AFF',
-    transform: [{ scale: 1.15 }],
+    borderColor: '#000',
   },
   canvasContainer: {
     flex: 1,
-    marginTop: 0,
+    backgroundColor: '#E8F1F9',
     overflow: 'hidden',
   },
   scrollContent: {
@@ -802,6 +870,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333'
+  },
+  // Templates
+  templateThumb: {
+    margin: 10,
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  activeTemplateThumb: {
+    borderColor: '#2965B2',
+    backgroundColor: '#E8F1F9',
+  },
+  templateThumbInner: {
+    width: 80,
+    height: 100,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    overflow: 'hidden',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  templateThumbLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#555',
   }
 });
 
