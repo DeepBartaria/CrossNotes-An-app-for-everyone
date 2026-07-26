@@ -1,13 +1,17 @@
 {
   "expo": {
     "name": "goodnotes-clone",
-    "slug": "goodnotes-clone",
+    "slug": "crossnotes",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dynamicdeepsteam.crossnotes",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +20,17 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.dynamicdeepsteam.crossnotes"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cec650e3-6b11-4d21-9372-afb2105b7e9c"
+      }
+    },
+    "owner": "dynamicdeeps-team"
   }
 }
