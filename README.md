@@ -1,6 +1,6 @@
 <div align="center">
 
-# CrossNotes
+<img src="assets/banner.png" width="100%" alt="CrossNotes Banner">
 
 ### Next-Generation Cross-Platform Digital Note-Taking
 
@@ -75,3 +75,9 @@ cd goodnotes-clone
 npx expo start
 ```
 *Tap the 'Sync' icon in the top right corner of the app and enter the Mac's IP address to establish the realtime connection.*
+
+---
+
+<div align="center">
+  &copy; 2026 Deep Bartaria (<a href="https://github.com/DeepBartaria">github.com/DeepBartaria</a>). All Rights Reserved.
+</div>

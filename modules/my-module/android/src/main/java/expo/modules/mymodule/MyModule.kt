@@ -24,6 +24,10 @@ class MyModule : Module() {
         view.setStrokeWidth(width.toFloat())
       }
       
+      Prop("penType") { view: MyModuleView, type: String ->
+        view.setPenType(type)
+      }
+      
       AsyncFunction("clear") { view: MyModuleView ->
         view.clear()
       }

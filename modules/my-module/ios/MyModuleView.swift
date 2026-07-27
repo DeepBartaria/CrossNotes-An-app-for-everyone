@@ -28,6 +28,7 @@ class MyModuleView: ExpoView {
 
   var currentColorHex: String = "#000000"
   var currentStrokeWidth: CGFloat = 5.0
+  var currentPenType: String = "pen"
 
   func setInkColor(hex: String) {
     currentColorHex = hex
@@ -39,9 +40,32 @@ class MyModuleView: ExpoView {
     updateTool()
   }
 
+  func setPenType(type: String) {
+    currentPenType = type
+    updateTool()
+  }
+
   func updateTool() {
     if #available(iOS 14.0, *) {
-      canvasView.tool = PKInkingTool(.pen, color: hexStringToUIColor(hex: currentColorHex), width: currentStrokeWidth)
+      let color = hexStringToUIColor(hex: currentColorHex)
+      switch currentPenType {
+      case "pencil":
+        canvasView.tool = PKInkingTool(.pencil, color: color, width: currentStrokeWidth)
+      case "fountain":
+        if #available(iOS 17.0, *) {
+          canvasView.tool = PKInkingTool(.fountainPen, color: color, width: currentStrokeWidth)
+        } else {
+          canvasView.tool = PKInkingTool(.pen, color: color, width: currentStrokeWidth * 1.5)
+        }
+      case "brush":
+        if #available(iOS 17.0, *) {
+          canvasView.tool = PKInkingTool(.watercolor, color: color, width: currentStrokeWidth)
+        } else {
+          canvasView.tool = PKInkingTool(.marker, color: color, width: currentStrokeWidth)
+        }
+      default:
+        canvasView.tool = PKInkingTool(.pen, color: color, width: currentStrokeWidth)
+      }
     }
   }
 

@@ -4,9 +4,10 @@ import { useRef, useState, useEffect } from 'react';
 import { StyleSheet, Text, View, SafeAreaView, TouchableOpacity, Alert, Platform, StatusBar as RNStatusBar, ScrollView, Dimensions, Modal, TextInput, Image, Switch, FlatList } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, runOnJS, withSpring, useAnimatedRef, scrollTo, withTiming, withDelay, Easing } from 'react-native-reanimated';
 import { io, Socket } from 'socket.io-client';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import MyModuleView from './modules/my-module/src/MyModuleView';
 import DraggableOverlay from './DraggableOverlay';
 
@@ -46,9 +47,72 @@ const SchoolTemplate = () => (
   </View>
 );
 
+const CustomSplashScreen = ({ onFinish }: { onFinish: () => void }) => {
+  const logoScale = useSharedValue(0.5);
+  const logoOpacity = useSharedValue(0);
+  const textWidth = useSharedValue(0);
+  const containerOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    logoOpacity.value = withTiming(1, { duration: 600 });
+    logoScale.value = withSpring(1, { damping: 12 });
+    
+    // Increased target width to 280 to ensure text fully fits
+    textWidth.value = withDelay(800, withTiming(280, { duration: 700, easing: Easing.out(Easing.exp) }));
+
+    containerOpacity.value = withDelay(2500, withTiming(0, { duration: 500 }, (finished) => {
+      if (finished) {
+        runOnJS(onFinish)();
+      }
+    }));
+  }, []);
+
+  const logoAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: logoOpacity.value,
+    transform: [{ scale: logoScale.value }]
+  }));
+
+  const textAnimatedStyle = useAnimatedStyle(() => ({
+    width: textWidth.value
+  }));
+
+  const containerAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: containerOpacity.value
+  }));
+
+  const LOGO_SIZE = 80;
+  
+  return (
+    <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }, containerAnimatedStyle]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        
+        <Animated.View style={[{ zIndex: 2 }, logoAnimatedStyle]}>
+          <Image 
+            source={require('./assets/CrossNotes.png')} 
+            style={{ width: LOGO_SIZE, height: LOGO_SIZE }} 
+            resizeMode="contain" 
+          />
+        </Animated.View>
+
+        <Animated.View style={[{ overflow: 'hidden', height: LOGO_SIZE, justifyContent: 'center', zIndex: 1 }, textAnimatedStyle]}>
+          <View style={{ width: 300, paddingLeft: 10 }}>
+            <Text numberOfLines={1} style={{ fontSize: 44, fontWeight: '800', includeFontPadding: false }}>
+              <Text style={{ color: '#1B234B' }}>Cross</Text>
+              <Text style={{ color: '#6A4DFF' }}>Notes</Text>
+            </Text>
+          </View>
+        </Animated.View>
+
+      </View>
+    </Animated.View>
+  );
+};
+
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
   const [isEraser, setIsEraser] = useState(false);
+  const [penType, setPenType] = useState('pen'); // 'pen', 'pencil', 'fountain', 'brush'
   const [strokeWidth, setStrokeWidth] = useState(THICKNESSES[1]);
   const [pages, setPages] = useState([{ id: Date.now().toString(), template: 'blank', overlays: [] as any[] }]);
   const [activePageIndex, setActivePageIndex] = useState(0);
@@ -67,7 +131,6 @@ export default function App() {
   const socketRef = useRef<Socket | null>(null);
   const activePageRef = useRef(activePageIndex);
   activePageRef.current = activePageIndex;
-  const scrollYRef = useRef(0);
   
   const canvasRefs = useRef<any[]>([]);
 
@@ -112,8 +175,11 @@ export default function App() {
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
+  
   const translateY = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
+  const contentHeight = useSharedValue(0);
+  const [isPullingToAdd, setIsPullingToAdd] = useState(false);
 
   const handleLongPress = (x: number, y: number, absX: number, absY: number) => {
     if (selectedOverlayId) {
@@ -139,9 +205,9 @@ export default function App() {
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onStart(() => {
-      scale.value = 1;
-      translateX.value = 0;
-      translateY.value = 0;
+      scale.value = withSpring(1);
+      translateX.value = withSpring(0);
+      translateY.value = withSpring(0);
       savedScale.value = 1;
       savedTranslateX.value = 0;
       savedTranslateY.value = 0;
@@ -152,27 +218,95 @@ export default function App() {
       scale.value = Math.max(0.5, Math.min(savedScale.value * e.scale, 5));
     })
     .onEnd(() => {
+      if (scale.value <= 1) {
+        translateX.value = withSpring(0);
+        savedTranslateX.value = 0;
+      }
       savedScale.value = scale.value;
     });
+
+  const isPullingValue = useSharedValue(false);
 
   const panGesture = Gesture.Pan()
     .minPointers(2)
     .maxPointers(2)
     .onUpdate((e) => {
+      // Horizontal pan
       translateX.value = savedTranslateX.value + e.translationX;
-      translateY.value = savedTranslateY.value + e.translationY;
+      
+      // Vertical pan using translateY matrix transform (crash-free!)
+      const maxScrollY = Math.max(0, contentHeight.value - SCREEN_HEIGHT);
+      let targetTranslateY = savedTranslateY.value + e.translationY;
+      
+      if (targetTranslateY > 0) {
+        targetTranslateY = targetTranslateY * 0.3; // Rubber-band top
+      } else if (targetTranslateY < -maxScrollY) {
+        const overscroll = targetTranslateY - (-maxScrollY);
+        targetTranslateY = -maxScrollY + (overscroll * 0.3); // Rubber-band bottom
+      }
+      
+      translateY.value = targetTranslateY;
+      
+      const overscrollAmt = (-targetTranslateY) - maxScrollY;
+      if (overscrollAmt > 60) {
+        if (!isPullingValue.value) {
+          isPullingValue.value = true;
+          runOnJS(setIsPullingToAdd)(true);
+        }
+      } else {
+        if (isPullingValue.value) {
+          isPullingValue.value = false;
+          runOnJS(setIsPullingToAdd)(false);
+        }
+      }
     })
-    .onEnd(() => {
+    .onEnd((e) => {
+      if (scale.value <= 1) {
+        translateX.value = withSpring(0);
+      } else {
+        const maxTranslateX = (SCREEN_WIDTH * scale.value - SCREEN_WIDTH) / 2;
+        if (translateX.value > maxTranslateX) {
+          translateX.value = withSpring(maxTranslateX);
+        } else if (translateX.value < -maxTranslateX) {
+          translateX.value = withSpring(-maxTranslateX);
+        }
+      }
       savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
+      
+      // Vertical snap and pull-to-add logic
+      const maxScrollY = Math.max(0, contentHeight.value - SCREEN_HEIGHT);
+      let targetTranslateY = savedTranslateY.value + e.translationY;
+      let shouldSnap = true;
+      
+      if (targetTranslateY < -maxScrollY - 60) {
+        runOnJS(handleAddPage)();
+        shouldSnap = false; 
+        targetTranslateY = -maxScrollY - PAGE_HEIGHT - 20; 
+      } else {
+        if (targetTranslateY > 0) {
+          targetTranslateY = 0;
+        } else if (targetTranslateY < -maxScrollY) {
+          targetTranslateY = -maxScrollY;
+        }
+      }
+      
+      savedTranslateY.value = targetTranslateY;
+      
+      if (shouldSnap) {
+        translateY.value = withSpring(targetTranslateY);
+      } else {
+        translateY.value = targetTranslateY; // Fast forward instantly
+      }
+      runOnJS(setIsPullingToAdd)(false);
     });
 
   const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, longPressGesture, tapGesture, doubleTapGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
+    transformOrigin: 'top',
     transform: [
-      { translateX: translateX.value },
       { translateY: translateY.value },
+      { translateX: translateX.value },
       { scale: scale.value },
     ],
   }));
@@ -193,8 +327,14 @@ export default function App() {
   };
 
   const handleAddPage = () => {
-    setPages([...pages, { id: Date.now().toString(), template: 'blank', overlays: [] }]);
+    const lastTemplate = pages[pages.length - 1].template;
+    setPages([...pages, { id: Date.now().toString(), template: lastTemplate, overlays: [] }]);
     setActivePageIndex(pages.length);
+    
+    // Safely jump to the newly added page without using runOnUI or setTimeout
+    const newMaxScroll = Math.max(0, contentHeight.value - SCREEN_HEIGHT + PAGE_HEIGHT + 20);
+    translateY.value = withSpring(-newMaxScroll);
+    savedTranslateY.value = -newMaxScroll;
   };
 
   const handleChangeTemplate = (templateName: string) => {
@@ -204,12 +344,72 @@ export default function App() {
     setTemplateModalVisible(false);
   };
 
+  const handleAddImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const asset = result.assets[0];
+      setPages((prev) => {
+        const newPages = [...prev];
+        const currPage = { ...newPages[activePageRef.current] };
+        currPage.overlays = [...(currPage.overlays || []), {
+          id: Date.now().toString(),
+          type: 'image',
+          content: `data:image/png;base64,${asset.base64}`,
+          x: 150,
+          y: 200,
+          scale: 1,
+          rotation: 0
+        }];
+        newPages[activePageRef.current] = currPage;
+        return newPages;
+      });
+    }
+  };
+
+  const handleAddText = () => {
+    setPages((prev) => {
+      const newPages = [...prev];
+      const currPage = { ...newPages[activePageRef.current] };
+      currPage.overlays = [...(currPage.overlays || []), {
+        id: Date.now().toString(),
+        type: 'text',
+        content: 'Double tap to edit text',
+        x: 150,
+        y: 200,
+        scale: 1,
+        rotation: 0
+      }];
+      newPages[activePageRef.current] = currPage;
+      return newPages;
+    });
+  };
+
+  const handleClearPage = () => {
+    Alert.alert('Clear Page', 'Are you sure you want to clear all ink and images from this page?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: () => {
+        canvasRefs.current[activePageIndex]?.clear?.();
+        setPages((prev) => {
+          const newPages = [...prev];
+          newPages[activePageIndex].overlays = [];
+          return newPages;
+        });
+      }}
+    ]);
+  };
+
   const handlePaste = async () => {
     if (!contextMenu) return;
     try {
       const hasImage = await Clipboard.hasImageAsync();
       let newItem = null;
-      const pageY = contextMenu.y + scrollYRef.current;
+      const pageY = contextMenu.y + scrollY.value;
       
       if (hasImage) {
         const image = await Clipboard.getImageAsync({ format: 'png' });
@@ -299,9 +499,12 @@ export default function App() {
     setSelectedOverlayId(null);
   };
 
+  // Pull-to-add logic
+
   return (
     <GestureHandlerRootView style={styles.container}>
-      <SafeAreaView style={styles.topBar}>
+      {showSplash && <CustomSplashScreen onFinish={() => setShowSplash(false)} />}
+      <View style={styles.topBar}>
         <View style={styles.topBarContent}>
           <View style={styles.topBarSection}>
             <TouchableOpacity style={styles.topBarIcon}>
@@ -317,36 +520,36 @@ export default function App() {
           </View>
 
           <View style={styles.topBarCenterSection}>
-            <TouchableOpacity style={styles.topBarIcon}>
-              <MaterialCommunityIcons name="cursor-default-outline" size={24} color="#FFF" />
+            <TouchableOpacity style={styles.topBarIcon} onPress={() => setIsEraser(false)}>
+              <MaterialCommunityIcons name="pencil" size={24} color={!isEraser ? "#2965B2" : "#FFF"} style={!isEraser ? styles.activeIconWrap : {}} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.activeTopBarIcon}>
-              <MaterialCommunityIcons name="pencil" size={22} color="#2965B2" />
+            <TouchableOpacity style={styles.topBarIcon} onPress={() => setIsEraser(true)}>
+              <MaterialCommunityIcons name="eraser" size={24} color={isEraser ? "#2965B2" : "#FFF"} style={isEraser ? styles.activeIconWrap : {}} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.topBarIcon}>
+            <TouchableOpacity style={styles.topBarIcon} onPress={handleAddText}>
               <MaterialCommunityIcons name="format-text" size={24} color="#FFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.topBarIcon}>
+            <TouchableOpacity style={styles.topBarIcon} onPress={handleAddImage}>
               <MaterialCommunityIcons name="image-outline" size={24} color="#FFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.topBarIcon} onPress={() => setTemplateModalVisible(true)}>
-              <MaterialCommunityIcons name="file-document-outline" size={24} color="#FFF" />
+            <TouchableOpacity style={styles.topBarIcon} onPress={handleClearPage}>
+              <MaterialCommunityIcons name="delete-outline" size={24} color="#FFF" />
             </TouchableOpacity>
           </View>
 
           <View style={styles.topBarSectionRight}>
+            <TouchableOpacity style={styles.topBarIcon} onPress={() => setTemplateModalVisible(true)}>
+              <MaterialCommunityIcons name="file-document-outline" size={24} color="#FFF" />
+            </TouchableOpacity>
             <TouchableOpacity style={styles.topBarIcon} onPress={handleAddPage}>
               <MaterialCommunityIcons name="file-document-plus-outline" size={24} color="#FFF" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.topBarIcon} onPress={handleSave}>
               <MaterialCommunityIcons name="export-variant" size={24} color="#FFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.topBarIcon}>
-              <MaterialCommunityIcons name="dots-horizontal-circle-outline" size={24} color="#FFF" />
-            </TouchableOpacity>
           </View>
         </View>
-      </SafeAreaView>
+      </View>
 
       <View style={styles.contentArea}>
         
@@ -363,19 +566,37 @@ export default function App() {
         <View style={styles.contextBarContainer}>
           <View style={styles.mainPill}>
             <TouchableOpacity 
-              style={[styles.contextIcon, !isEraser && styles.activeContextIcon]} 
-              onPress={() => setIsEraser(false)}
+              style={[styles.contextIcon, !isEraser && penType === 'pen' && styles.activeContextIcon]} 
+              onPress={() => { setIsEraser(false); setPenType('pen'); }}
             >
-              <MaterialCommunityIcons name="lead-pencil" size={24} color={!isEraser ? "#000" : "#4A4A4A"} />
+              <MaterialCommunityIcons name="pen" size={24} color={!isEraser && penType === 'pen' ? "#000" : "#4A4A4A"} />
             </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.contextIcon, !isEraser && penType === 'pencil' && styles.activeContextIcon]} 
+              onPress={() => { setIsEraser(false); setPenType('pencil'); }}
+            >
+              <MaterialCommunityIcons name="lead-pencil" size={24} color={!isEraser && penType === 'pencil' ? "#000" : "#4A4A4A"} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.contextIcon, !isEraser && penType === 'fountain' && styles.activeContextIcon]} 
+              onPress={() => { setIsEraser(false); setPenType('fountain'); }}
+            >
+              <MaterialCommunityIcons name="fountain-pen-tip" size={24} color={!isEraser && penType === 'fountain' ? "#000" : "#4A4A4A"} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.contextIcon, !isEraser && penType === 'brush' && styles.activeContextIcon]} 
+              onPress={() => { setIsEraser(false); setPenType('brush'); }}
+            >
+              <MaterialCommunityIcons name="brush" size={24} color={!isEraser && penType === 'brush' ? "#000" : "#4A4A4A"} />
+            </TouchableOpacity>
+            
+            <View style={{ width: 1, height: 24, backgroundColor: '#E0E0E0', marginHorizontal: 8 }} />
+
             <TouchableOpacity 
               style={[styles.contextIcon, isEraser && styles.activeContextIcon]} 
               onPress={() => setIsEraser(true)}
             >
               <MaterialCommunityIcons name="eraser" size={24} color={isEraser ? "#000" : "#4A4A4A"} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.contextIcon}>
-              <MaterialCommunityIcons name="marker" size={24} color="#4A4A4A" />
             </TouchableOpacity>
 
             <View style={styles.divider} />
@@ -421,13 +642,10 @@ export default function App() {
             <Animated.View style={[{ flex: 1 }, animatedStyle]}>
               <ScrollView 
                 style={{ flex: 1 }} 
+                scrollEnabled={false}
                 contentContainerStyle={styles.scrollContent}
-                onScroll={(e) => scrollYRef.current = e.nativeEvent.contentOffset.y}
-                scrollEventThrottle={16}
-                onMomentumScrollEnd={(e) => {
-                  const offsetY = e.nativeEvent.contentOffset.y;
-                  scrollYRef.current = offsetY;
-                  setActivePageIndex(Math.round(offsetY / (PAGE_HEIGHT + 20))); // 20 is gap
+                onContentSizeChange={(w, h) => {
+                  contentHeight.value = h;
                 }}
               >
                 {pages.map((p, index) => (
@@ -465,10 +683,23 @@ export default function App() {
                       color={selectedColor} 
                       isEraser={isEraser} 
                       strokeWidth={strokeWidth}
+                      penType={penType}
                     />
                     <Text style={styles.pageNumberIndicator}>{index + 1} / {pages.length}</Text>
                   </View>
                 ))}
+                
+                {/* Pull to Add Footer */}
+                <View style={styles.pullToAddFooter}>
+                  <MaterialCommunityIcons 
+                    name={isPullingToAdd ? "plus-circle" : "plus-circle-outline"} 
+                    size={28} 
+                    color={isPullingToAdd ? "#2965B2" : "#999"} 
+                  />
+                  <Text style={[styles.pullToAddText, isPullingToAdd && styles.pullToAddTextActive]}>
+                    {isPullingToAdd ? "Release to add page" : "Pull up to add page"}
+                  </Text>
+                </View>
               </ScrollView>
             </Animated.View>
           </GestureDetector>
@@ -517,8 +748,8 @@ export default function App() {
       )}
 
       {/* Template Selection Modal */}
-      <Modal visible={templateModalVisible} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setTemplateModalVisible(false)}>
+      <Modal visible={templateModalVisible} transparent animationType="fade" onRequestClose={() => setTemplateModalVisible(false)}>
+        <TouchableOpacity style={[styles.modalOverlay, { zIndex: 999, elevation: 999 }]} activeOpacity={1} onPress={() => setTemplateModalVisible(false)}>
           <View style={[styles.modalContent, { width: '80%', height: '70%', alignItems: 'center' }]}>
             <Text style={styles.modalTitle}>Choose Template</Text>
             <FlatList
@@ -527,7 +758,7 @@ export default function App() {
               keyExtractor={(item) => item}
               renderItem={({ item }) => (
                 <TouchableOpacity 
-                  style={[styles.templateThumb, pages[activePageIndex].template === item && styles.activeTemplateThumb]}
+                  style={[styles.templateThumb, pages[activePageIndex]?.template === item && styles.activeTemplateThumb]}
                   onPress={() => handleChangeTemplate(item)}
                 >
                   <View style={styles.templateThumbInner}>
@@ -549,7 +780,7 @@ export default function App() {
       </Modal>
 
       {/* Transfer Connection Modal */}
-      <Modal visible={transferModalVisible} transparent animationType="slide">
+      <Modal visible={transferModalVisible} transparent animationType="slide" onRequestClose={() => setTransferModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Connect to Mac Transfer</Text>
@@ -604,9 +835,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF', 
   },
   topBar: {
-    backgroundColor: '#2965B2', 
-    zIndex: 20,
-    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
+    backgroundColor: '#2965B2',
+    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 45,
+    zIndex: 10,
+    elevation: 10,
   },
   topBarContent: {
     flexDirection: 'row',
@@ -639,6 +871,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+  },
+  activeIconWrap: {
+    backgroundColor: '#E8F1F9',
+    padding: 6,
+    borderRadius: 8,
+    overflow: 'hidden'
   },
   contentArea: {
     flex: 1,
@@ -902,6 +1140,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#555',
+  },
+  // Pull to Add Footer
+  pullToAddFooter: {
+    position: 'absolute',
+    bottom: -100,
+    width: '100%',
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  pullToAddText: {
+    fontSize: 16,
+    color: '#999',
+    fontWeight: '600',
+  },
+  pullToAddTextActive: {
+    color: '#2965B2',
   }
 });
 

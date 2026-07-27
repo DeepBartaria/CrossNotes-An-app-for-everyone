@@ -16,6 +16,8 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
     private var isEraser = false
     private val strokes = mutableListOf<Stroke>()
     private var currentPath = Path()
+    private var currentPaint: Paint? = null
+    private var currentPenType = "pen"
     
     private var currentStrokeWidth = 5f
     
@@ -39,6 +41,10 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
         currentStrokeWidth = width
     }
     
+    fun setPenType(type: String) {
+        currentPenType = type
+    }
+    
     fun setIsEraser(eraser: Boolean) {
         isEraser = eraser
     }
@@ -53,6 +59,7 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
     fun clear() {
         strokes.clear()
         currentPath = Path()
+        currentPaint = null
         invalidate()
     }
     
@@ -79,15 +86,42 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
                 color = Color.TRANSPARENT
                 strokeWidth = currentStrokeWidth * 5f // Thicker for eraser
                 xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+                isAntiAlias = true
+                style = Paint.Style.STROKE
+                strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
             } else {
                 color = currentColor
                 strokeWidth = currentStrokeWidth
                 xfermode = null
+                isAntiAlias = true
+                style = Paint.Style.STROKE
+
+                when (currentPenType) {
+                    "pencil" -> {
+                        pathEffect = android.graphics.DiscretePathEffect(10f, 2f)
+                        alpha = 150
+                        strokeJoin = Paint.Join.ROUND
+                        strokeCap = Paint.Cap.ROUND
+                    }
+                    "brush" -> {
+                        maskFilter = android.graphics.BlurMaskFilter(currentStrokeWidth / 2f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        alpha = 180
+                        strokeJoin = Paint.Join.ROUND
+                        strokeCap = Paint.Cap.ROUND
+                    }
+                    "fountain" -> {
+                        // Simulating calligraphy with a flat/chisel tip using SQUARE cap and BEVEL join
+                        strokeJoin = Paint.Join.BEVEL
+                        strokeCap = Paint.Cap.SQUARE
+                    }
+                    else -> {
+                        // Standard pen
+                        strokeJoin = Paint.Join.ROUND
+                        strokeCap = Paint.Cap.ROUND
+                    }
+                }
             }
-            isAntiAlias = true
-            style = Paint.Style.STROKE
-            strokeJoin = Paint.Join.ROUND
-            strokeCap = Paint.Cap.ROUND
         }
     }
 
@@ -100,7 +134,9 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
         for (stroke in strokes) {
             canvas.drawPath(stroke.path, stroke.paint)
         }
-        canvas.drawPath(currentPath, createPaint())
+        currentPaint?.let {
+            canvas.drawPath(currentPath, it)
+        }
         
         canvas.restoreToCount(saveCount)
     }
@@ -111,13 +147,15 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
         val x = event.x
         val y = event.y
 
-        val isStylusButtonDown = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
-        val isEraserTool = event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
-        isTemporaryEraser = isStylusButtonDown || isEraserTool
-
-        when (event.action) {
+        when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                val isStylusButtonDown = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
+                val isEraserTool = event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
+                isTemporaryEraser = isStylusButtonDown || isEraserTool
+                
+                parent?.requestDisallowInterceptTouchEvent(true)
                 currentPath = Path()
+                currentPaint = createPaint()
                 currentPath.moveTo(x, y)
                 previousX = x
                 previousY = y
@@ -137,10 +175,13 @@ class MyModuleView(context: Context, appContext: AppContext) : ExpoView(context,
                 invalidate()
                 return true
             }
-            MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 currentPath.lineTo(x, y)
-                strokes.add(Stroke(currentPath, createPaint()))
+                currentPaint?.let {
+                    strokes.add(Stroke(currentPath, it))
+                }
                 currentPath = Path()
+                currentPaint = null
                 invalidate()
                 return true
             }
